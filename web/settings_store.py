@@ -21,7 +21,8 @@ def load_settings() -> dict:
     if SETTINGS_PATH.exists():
         try:
             data = json.loads(SETTINGS_PATH.read_text())
-            return {**DEFAULTS, **data}
+            if isinstance(data, dict):
+                return {**DEFAULTS, **data}
         except (json.JSONDecodeError, OSError):
             pass
     return dict(DEFAULTS)

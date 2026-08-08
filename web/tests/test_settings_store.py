@@ -32,3 +32,10 @@ def test_load_settings_survives_corrupt_json():
     settings_store.SETTINGS_PATH.write_text("{not json")
     result = settings_store.load_settings()
     assert result == {"token": "", "include_adult_content": False}
+
+
+@pytest.mark.parametrize("payload", ["null", "42", "[]"])
+def test_load_settings_survives_non_dict_json(payload):
+    settings_store.SETTINGS_PATH.write_text(payload)
+    result = settings_store.load_settings()
+    assert result == {"token": "", "include_adult_content": False}
