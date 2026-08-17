@@ -192,6 +192,7 @@ body {
   min-width: 0;
 }
 .toggle-item:empty { pointer-events: none; }
+.toggle-item.disabled { opacity: 0.45; cursor: default; }
 .toggle-item input[type=checkbox] { display: none; }
 
 .toggle-track {

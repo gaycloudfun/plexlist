@@ -2,11 +2,18 @@
 
 let currentMode = 'quick';
 let ruleSeq     = 0;
-let eventSource = null;
+let buildAbort  = null;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
+  try {
+    const settings = await apiFetch('/api/settings');
+    applyAdultContentState(settings.include_adult_content);
+  } catch {
+    // Settings unreadable — assume the safe default (adult content off).
+    applyAdultContentState(false);
+  }
   try {
     const res = await apiFetch('/api/status');
     if (res.connected) {
@@ -52,6 +59,25 @@ function setBadge(color, text) {
   txt.textContent = text;
 }
 
+// ── Adult-content-dependent toggles ───────────────────────────────────────────
+
+// "Folder" grouping only ever produces playlists for items under the adult
+// library root, so it is dead weight (and misleading) while adult content is
+// excluded. Keep it off and disabled unless the setting is on.
+function applyAdultContentState(includeAdult) {
+  const folder = document.querySelector('input[name="ptype"][value="folder"]');
+  if (!folder) return;
+  folder.disabled = !includeAdult;
+  if (!includeAdult) folder.checked = false;
+  const item = folder.closest('.toggle-item');
+  if (item) {
+    item.classList.toggle('disabled', !includeAdult);
+    item.title = includeAdult
+      ? ''
+      : 'Enable “Include adult-content library items” in Settings to use Folder grouping.';
+  }
+}
+
 // ── Settings modal ────────────────────────────────────────────────────────────
 
 document.getElementById('settings-btn').addEventListener('click', openModal);
@@ -60,6 +86,7 @@ async function openModal() {
   try {
     const res = await apiFetch('/api/settings');
     document.getElementById('adult-content-toggle').checked = res.include_adult_content;
+    applyAdultContentState(res.include_adult_content);
   } catch {
     // Not connected yet — leave the toggle at its default (unchecked).
   }
@@ -82,21 +109,33 @@ document.addEventListener('keydown', e => {
 async function saveSettings() {
   const token = document.getElementById('token-input').value.trim();
   const includeAdult = document.getElementById('adult-content-toggle').checked;
+
+  closeModal();
+
+  // Settings save is unconditional: it needs no token and no connection, so a
+  // user with a saved connection can flip the adult-content toggle on its own.
+  try {
+    const saved = await apiFetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({include_adult_content: includeAdult}),
+    });
+    applyAdultContentState(saved.include_adult_content);
+  } catch (e) {
+    appendLog(`Error saving settings: ${e.message}`, 'red');
+  }
+
+  // Only touch the connection when a token was actually entered.
   if (!token) return;
+
   setBadge('muted', 'Connecting…');
   document.getElementById('build-btn').disabled   = true;
   document.getElementById('destroy-btn').disabled = true;
-  closeModal();
   try {
     const res = await apiFetch('/api/connect', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({token}),
-    });
-    await apiFetch('/api/settings', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({include_adult_content: includeAdult}),
     });
     setConnected(res.name);
     await loadLibraries();
@@ -177,8 +216,9 @@ function getRulesData() {
 
 // ── Build ─────────────────────────────────────────────────────────────────────
 
-function startBuild(dryRun) {
-  if (eventSource) { eventSource.close(); eventSource = null; }
+async function startBuild(dryRun) {
+  // Abort any build stream still running (EventSource.close()'s equivalent).
+  if (buildAbort) { buildAbort.abort(); buildAbort = null; }
 
   const library = document.getElementById('library-select').value;
   const prefix  = document.getElementById('prefix-input').value;
@@ -189,30 +229,31 @@ function startBuild(dryRun) {
   document.getElementById('build-btn').disabled   = true;
   document.getElementById('preview-btn').disabled = true;
   document.getElementById('build-btn').textContent =
-    dryRun ? 'Build Playlists' : 'Building…';
+    dryRun ? 'Previewing…' : 'Building…';
 
-  let params;
+  let payload;
   if (currentMode === 'quick') {
     const selected = Array.from(document.querySelectorAll('input[name="ptype"]:checked'))
       .map(cb => cb.value).join(',');
     if (!selected) { appendLog('No playlist types selected.', 'red'); resetBtn(); return; }
     const actorFilter = document.getElementById('actor-filter').value.trim();
-    params = new URLSearchParams({
+    payload = {
       library, prefix, mode: 'quick', types: selected, actor_filter: actorFilter, dry_run: dryRun,
-    });
+    };
   } else {
     const rules = getRulesData();
     if (!rules.length) { appendLog('No rules defined.', 'red'); resetBtn(); return; }
-    params = new URLSearchParams({
+    payload = {
       library, prefix, mode: 'custom', rules: JSON.stringify(rules), dry_run: dryRun,
-    });
+    };
   }
 
   let playlistCount = 0;
-  eventSource = new EventSource(`/api/build?${params}`);
+  let finished      = false;
 
-  eventSource.onmessage = e => {
-    const msg = JSON.parse(e.data);
+  // Same message handling as before — only the transport changed. Returns true
+  // once a terminal message ('done' / 'error') has been handled.
+  const handleMessage = msg => {
     switch (msg.type) {
       case 'start':
         appendLog(`${dryRun ? 'Previewing' : 'Scanning'} ${msg.total} items in '${library}' …`, 'orange');
@@ -245,23 +286,87 @@ function startBuild(dryRun) {
           'orange'
         );
         resetBtn();
-        eventSource.close();
-        break;
+        return true;
 
       case 'error':
         appendLog(`Error: ${msg.msg}`, 'red');
         resetBtn();
-        eventSource.close();
-        break;
+        return true;
     }
+    return false;
   };
 
-  eventSource.onerror = () => {
-    if (eventSource.readyState === EventSource.CLOSED) return;
-    appendLog('Stream connection lost.', 'red');
-    resetBtn();
-    eventSource.close();
+  // One SSE event = one blank-line-terminated block of `data: ` lines.
+  const handleBlock = block => {
+    let done = false;
+    for (const line of block.split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      if (handleMessage(JSON.parse(line.slice(6)))) done = true;
+    }
+    return done;
   };
+
+  const controller = new AbortController();
+  buildAbort = controller;
+
+  try {
+    const response = await fetch('/api/build', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    // e.g. the 503 raised when Plex isn't connected: surface it instead of
+    // leaving the UI stuck on 'Starting…'.
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      appendLog(`Error: ${body.detail || `HTTP ${response.status}`}`, 'red');
+      resetBtn();
+      return;
+    }
+
+    const reader  = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer    = '';
+
+    while (!finished) {
+      const {value, done} = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        break;
+      }
+      buffer += decoder.decode(value, {stream: true});
+
+      let idx;
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const block = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        if (handleBlock(block)) { finished = true; break; }
+      }
+    }
+
+    // Trailing event with no blank-line terminator (shouldn't happen, but a
+    // proxy could clip it) — tolerate it rather than lose the result.
+    if (!finished && buffer.trim()) {
+      try { finished = handleBlock(buffer); } catch { /* partial JSON */ }
+    }
+
+    if (finished) {
+      await reader.cancel().catch(() => {});
+    } else {
+      // Stream ended without 'done' or 'error' — the old onerror path.
+      appendLog('Stream connection lost.', 'red');
+      resetBtn();
+    }
+  } catch (e) {
+    // A newer build superseded this one; it owns the UI now.
+    if (e.name === 'AbortError') return;
+    appendLog(`Error: ${e.message}`, 'red');
+    resetBtn();
+  } finally {
+    if (buildAbort === controller) buildAbort = null;
+  }
 }
 
 function resetBtn() {
