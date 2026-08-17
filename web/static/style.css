@@ -484,3 +484,45 @@ body {
 ::-webkit-scrollbar       { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--card2); border-radius: 3px; }
+
+/* ── Responsive (mobile) ─────────────────────────────────────────────────── */
+
+@media (max-width: 480px) {
+  .container { padding: 20px 14px 36px; gap: 12px; }
+
+  .header {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+  .brand-name { font-size: 24px; }
+  .header-right { flex-wrap: wrap; }
+
+  .badge { max-width: 100%; }
+  .badge-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 160px;
+  }
+
+  .toggle-row { flex-wrap: wrap; row-gap: 10px; }
+  .toggle-item {
+    flex: 1 1 45%;
+    min-width: 130px;
+  }
+  .toggle-item > span:last-child {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .stats-row { gap: 8px; }
+  .stat-tile { padding: 10px 6px; }
+  .stat-value { font-size: 21px; }
+  .stat-label { font-size: 11px; }
+
+  .btn-row { flex-direction: column; }
+
+  .rule-fields { flex-direction: column; }
+  .rule-field { min-width: 0; }
+}
