@@ -107,12 +107,17 @@ def auto_name(rule: dict) -> str:
     return " · ".join(parts) or "Custom"
 
 
-def upsert_playlist(plex, full_name: str, items: list, library_name: str):
+def upsert_playlist(plex, full_name: str, items: list, library_name: str, dry_run: bool = False) -> bool:
+    replaced = False
     for pl in plex.playlists():
         if pl.title == full_name:
-            pl.delete()
+            replaced = True
+            if not dry_run:
+                pl.delete()
             break
-    plex.createPlaylist(full_name, section=plex.library.section(library_name), items=items)
+    if not dry_run:
+        plex.createPlaylist(full_name, section=plex.library.section(library_name), items=items)
+    return replaced
 
 
 def get_plex() -> PlexServer:
@@ -217,6 +222,7 @@ def _build_worker(
     rules_list: list,
     q: queue.Queue,
     include_adult: bool = False,
+    dry_run: bool = False,
 ):
     try:
         section   = plex.library.section(library)
@@ -236,47 +242,71 @@ def _build_worker(
                     q.put({"type": "progress", "current": i, "total": total})
                 continue
 
+            matched = False
+
             if mode == "quick":
                 if "studio" in selected:
                     studio = getattr(item, "studio", None)
                     if studio:
                         groups[f"Studio: {studio}"].append(item)
+                        matched = True
                 if "genre" in selected:
                     for g in getattr(item, "genres", []):
                         groups[f"Genre: {g.tag}"].append(item)
+                        matched = True
                 if "director" in selected:
                     for d in getattr(item, "directors", []):
                         groups[f"Director: {d.tag}"].append(item)
+                        matched = True
                 if "actor" in selected:
                     for role in getattr(item, "roles", []):
                         if not actor_filter or actor_filter in role.tag.lower():
                             groups[f"Actor: {role.tag}"].append(item)
+                            matched = True
                 if "resolution" in selected:
                     lbl = resolution_label(item)
                     if lbl:
                         groups[f"Resolution: {lbl}"].append(item)
+                        matched = True
                 if "recent" in selected:
                     added = getattr(item, "addedAt", None)
                     if added and added >= cutoff:
                         groups[f"Recently Added (Last {RECENT_DAYS} Days)"].append(item)
+                        matched = True
                 if "folder" in selected:
                     try:
                         pg = parse_path_groups(item.media[0].parts[0].file)
-                        if "studio"   in pg: groups[f"FLDR STU: {pg['studio']}"].append(item)
-                        if "category" in pg: groups[f"FLDR Cat: {pg['category']}"].append(item)
+                        if "studio" in pg:
+                            groups[f"FLDR STU: {pg['studio']}"].append(item)
+                            matched = True
+                        if "category" in pg:
+                            groups[f"FLDR Cat: {pg['category']}"].append(item)
+                            matched = True
                     except (IndexError, AttributeError):
                         pass
                 if "duration" in selected:
                     ms = getattr(item, "duration", None)
                     if ms:
-                        if   ms < 2  * 60_000: groups["Duration: Under 2 Min"].append(item)
-                        elif ms < 5  * 60_000: groups["Duration: 2–5 Min"].append(item)
-                        elif ms < 10 * 60_000: groups["Duration: 5–10 Min"].append(item)
-                        elif ms > 60 * 60_000: groups["Duration: Over 1 Hour"].append(item)
+                        if ms < 2 * 60_000:
+                            groups["Duration: Under 2 Min"].append(item)
+                            matched = True
+                        elif ms < 5 * 60_000:
+                            groups["Duration: 2–5 Min"].append(item)
+                            matched = True
+                        elif ms < 10 * 60_000:
+                            groups["Duration: 5–10 Min"].append(item)
+                            matched = True
+                        elif ms > 60 * 60_000:
+                            groups["Duration: Over 1 Hour"].append(item)
+                            matched = True
             else:
                 for rule in rules_list:
                     if item_matches_rule(item, rule):
                         groups[str(rule["id"])].append(item)
+                        matched = True
+
+            if not matched:
+                skipped += 1
 
             if i % 10 == 0 or i == total:
                 q.put({"type": "progress", "current": i, "total": total})
@@ -300,9 +330,12 @@ def _build_worker(
                 name = key
 
             if len(items) >= MIN_ITEMS:
-                upsert_playlist(plex, f"{prefix}{name}", items, library)
+                replaced = upsert_playlist(plex, f"{prefix}{name}", items, library, dry_run=dry_run)
                 created += 1
-                q.put({"type": "playlist", "name": name, "count": len(items)})
+                q.put({
+                    "type": "playlist", "name": name, "count": len(items),
+                    "replaced": replaced, "dry_run": dry_run,
+                })
             else:
                 for item in items:
                     if item.ratingKey not in seen_ids:
@@ -310,11 +343,14 @@ def _build_worker(
                         seen_ids.add(item.ratingKey)
 
         if misc:
-            upsert_playlist(plex, f"{prefix}Misc", misc, library)
+            replaced = upsert_playlist(plex, f"{prefix}Misc", misc, library, dry_run=dry_run)
             created += 1
-            q.put({"type": "playlist", "name": "Misc", "count": len(misc)})
+            q.put({
+                "type": "playlist", "name": "Misc", "count": len(misc),
+                "replaced": replaced, "dry_run": dry_run,
+            })
 
-        q.put({"type": "done", "created": created, "total": total, "skipped": skipped})
+        q.put({"type": "done", "created": created, "total": total, "skipped": skipped, "dry_run": dry_run})
 
     except Exception as e:
         q.put({"type": "error", "msg": str(e)})
@@ -330,6 +366,7 @@ async def build(
     types: str   = "",
     actor_filter: str = "",
     rules: str   = "[]",
+    dry_run: bool = False,
 ):
     plex       = get_plex()
     selected   = set(types.split(",")) if types else set()
@@ -340,7 +377,7 @@ async def build(
     threading.Thread(
         target=_build_worker,
         args=(plex, library, prefix, mode, selected, actor_filter.lower(), rules_list, q),
-        kwargs={"include_adult": include_adult},
+        kwargs={"include_adult": include_adult, "dry_run": dry_run},
         daemon=True,
     ).start()
 
