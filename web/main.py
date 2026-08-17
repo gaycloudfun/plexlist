@@ -64,6 +64,18 @@ def resolution_label(item) -> str | None:
         return None
 
 
+def is_adult_item(item) -> bool:
+    try:
+        path = item.media[0].parts[0].file
+    except (IndexError, AttributeError):
+        return False
+    try:
+        Path(path).relative_to(PORN_ROOT)
+        return True
+    except ValueError:
+        return False
+
+
 def item_matches_rule(item, rule: dict) -> bool:
     if rule.get("studio"):
         if rule["studio"].lower() not in (getattr(item, "studio", "") or "").lower():
@@ -165,6 +177,21 @@ def connect(req: ConnectRequest):
         raise HTTPException(400, str(e))
 
 
+class SettingsRequest(BaseModel):
+    include_adult_content: bool
+
+
+@app.get("/api/settings")
+def get_settings():
+    return {"include_adult_content": load_settings().get("include_adult_content", False)}
+
+
+@app.post("/api/settings")
+def update_settings(req: SettingsRequest):
+    data = save_settings(include_adult_content=req.include_adult_content)
+    return {"include_adult_content": data["include_adult_content"]}
+
+
 class DestroyRequest(BaseModel):
     prefix: str
 
@@ -189,6 +216,7 @@ def _build_worker(
     actor_filter: str,
     rules_list: list,
     q: queue.Queue,
+    include_adult: bool = False,
 ):
     try:
         section   = plex.library.section(library)
@@ -199,8 +227,15 @@ def _build_worker(
         q.put({"type": "start", "total": total})
 
         groups: dict[str, list] = defaultdict(list)
+        skipped = 0
 
         for i, item in enumerate(all_items, 1):
+            if not include_adult and is_adult_item(item):
+                skipped += 1
+                if i % 10 == 0 or i == total:
+                    q.put({"type": "progress", "current": i, "total": total})
+                continue
+
             if mode == "quick":
                 if "studio" in selected:
                     studio = getattr(item, "studio", None)
@@ -279,7 +314,7 @@ def _build_worker(
             created += 1
             q.put({"type": "playlist", "name": "Misc", "count": len(misc)})
 
-        q.put({"type": "done", "created": created, "total": total})
+        q.put({"type": "done", "created": created, "total": total, "skipped": skipped})
 
     except Exception as e:
         q.put({"type": "error", "msg": str(e)})
@@ -299,11 +334,13 @@ async def build(
     plex       = get_plex()
     selected   = set(types.split(",")) if types else set()
     rules_list = json.loads(rules)
+    include_adult = load_settings().get("include_adult_content", False)
 
     q = queue.Queue()
     threading.Thread(
         target=_build_worker,
         args=(plex, library, prefix, mode, selected, actor_filter.lower(), rules_list, q),
+        kwargs={"include_adult": include_adult},
         daemon=True,
     ).start()
 
