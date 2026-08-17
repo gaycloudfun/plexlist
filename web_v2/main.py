@@ -5,6 +5,7 @@ Structly — Plex Playlist Builder  (web backend)
 import asyncio
 import json
 import queue
+import re
 import threading
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -38,6 +39,17 @@ RESOLUTION_MAP = {
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+_PLEX_TOKEN_RE = re.compile(r"X-Plex-Token=[^&\s]*")
+
+
+def redact_token(message) -> str:
+    """Strip any X-Plex-Token=... value out of text bound for the browser.
+
+    plexapi exception messages routinely embed the request URL, token and all.
+    """
+    return _PLEX_TOKEN_RE.sub("X-Plex-Token=[REDACTED]", str(message))
+
 
 def parse_path_groups(file_path: str) -> dict:
     groups = {}
@@ -152,7 +164,7 @@ def status():
         _plex = plex
         return {"connected": True, "name": _plex.friendlyName}
     except Exception as e:
-        return {"connected": False, "error": str(e)}
+        return {"connected": False, "error": redact_token(e)}
 
 
 @app.get("/api/libraries")
@@ -179,7 +191,7 @@ def connect(req: ConnectRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, redact_token(e))
 
 
 class SettingsRequest(BaseModel):
@@ -358,26 +370,32 @@ def _build_worker(
         q.put(None)
 
 
-@app.get("/api/build")
-async def build(
-    library: str,
-    prefix: str  = "t ",
-    mode: str    = "quick",
-    types: str   = "",
-    actor_filter: str = "",
-    rules: str   = "[]",
-    dry_run: bool = False,
-):
+class BuildRequest(BaseModel):
+    library: str
+    prefix: str  = "t "
+    mode: str    = "quick"
+    types: str   = ""
+    actor_filter: str = ""
+    rules: str   = "[]"
+    dry_run: bool = False
+
+
+# POST (not GET): starting a build mutates Plex, and a state-mutating GET is
+# trivially triggerable cross-origin. The client reads the SSE body manually
+# via fetch(), since EventSource cannot issue a POST.
+@app.post("/api/build")
+async def build(req: BuildRequest):
     plex       = get_plex()
-    selected   = set(types.split(",")) if types else set()
-    rules_list = json.loads(rules)
+    selected   = set(req.types.split(",")) if req.types else set()
+    rules_list = json.loads(req.rules)
     include_adult = load_settings().get("include_adult_content", False)
 
     q = queue.Queue()
     threading.Thread(
         target=_build_worker,
-        args=(plex, library, prefix, mode, selected, actor_filter.lower(), rules_list, q),
-        kwargs={"include_adult": include_adult, "dry_run": dry_run},
+        args=(plex, req.library, req.prefix, req.mode, selected,
+              req.actor_filter.lower(), rules_list, q),
+        kwargs={"include_adult": include_adult, "dry_run": req.dry_run},
         daemon=True,
     ).start()
 
