@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Structly — Playlist Builder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <div class="brand-name">st<span class="accent">r</span>uctly</div>
+        <div class="brand-sub">Playlist Builder for Plex</div>
+      </div>
+      <div class="header-right">
+        <div class="badge" id="badge">
+          <span class="badge-dot" id="badge-dot">●</span>
+          <span class="badge-text" id="badge-text">Connecting…</span>
+        </div>
+        <button class="icon-btn" id="settings-btn" title="Settings">⚙</button>
+      </div>
+    </header>
+
+    <div class="divider"></div>
+
+    <!-- Library -->
+    <div class="card">
+      <div class="card-label">LIBRARY</div>
+      <select id="library-select" class="select" disabled>
+        <option>Connecting…</option>
+      </select>
+    </div>
+
+    <!-- Prefix -->
+    <div class="card">
+      <div class="prefix-row">
+        <div class="card-label" style="margin-bottom:0">PREFIX</div>
+        <input type="text" id="prefix-input" class="prefix-entry" value="t " maxlength="3">
+        <span class="muted" style="font-size:12px; margin-left:8px;">max 3 chars</span>
+      </div>
+    </div>
+
+    <!-- Mode switcher -->
+    <div class="mode-switcher">
+      <button class="mode-btn active" id="mode-quick" onclick="setMode('quick')">Quick</button>
+      <button class="mode-btn" id="mode-custom" onclick="setMode('custom')">Custom</button>
+    </div>
+
+    <!-- Quick panel -->
+    <div class="card" id="quick-panel">
+      <div class="card-label">PLAYLIST TYPES</div>
+      <div class="toggle-grid">
+        <div class="toggle-row">
+          <label class="toggle-item">
+            <input type="checkbox" name="ptype" value="studio" checked>
+            <span class="toggle-track"></span><span>Studio</span>
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" name="ptype" value="genre" checked>
+            <span class="toggle-track"></span><span>Genre</span>
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" name="ptype" value="director" checked>
+            <span class="toggle-track"></span><span>Director</span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <label class="toggle-item">
+            <input type="checkbox" name="ptype" value="actor" checked id="actor-toggle">
+            <span class="toggle-track"></span><span>Actor</span>
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" name="ptype" value="resolution" checked>
+            <span class="toggle-track"></span><span>Resolution</span>
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" name="ptype" value="recent" checked>
+            <span class="toggle-track"></span><span>Recently Added</span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <label class="toggle-item">
+            <input type="checkbox" name="ptype" value="duration" checked>
+            <span class="toggle-track"></span><span>Duration</span>
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" name="ptype" value="folder" checked>
+            <span class="toggle-track"></span><span>Folder</span>
+          </label>
+          <label class="toggle-item"></label>
+        </div>
+      </div>
+      <div id="actor-entry-row" class="actor-entry-row">
+        <div class="field-label">Actor name</div>
+        <input type="text" id="actor-filter" class="text-input"
+               placeholder="e.g. Tom Hardy  (leave blank for all)">
+      </div>
+    </div>
+
+    <!-- Custom panel -->
+    <div class="card hidden" id="custom-panel">
+      <div class="card-label">CUSTOM RULES</div>
+      <div id="rules-list"></div>
+      <button class="add-rule-btn" onclick="addRule()">+ Add Rule</button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="stat-tile">
+        <div class="stat-value" id="stat-scanned">—</div>
+        <div class="stat-label">Scanned</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-value" id="stat-playlists">—</div>
+        <div class="stat-label">Playlists</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-value" id="stat-skipped">—</div>
+        <div class="stat-label">Skipped</div>
+      </div>
+    </div>
+
+    <!-- Progress -->
+    <div class="card">
+      <div id="progress-label" class="progress-label muted">Ready</div>
+      <div class="progress-track">
+        <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+      </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="btn-row">
+      <button class="btn-primary" id="build-btn" disabled onclick="startBuild(false)">Build Playlists</button>
+      <button class="btn-secondary" id="preview-btn" disabled onclick="startBuild(true)">Preview (Dry Run)</button>
+    </div>
+    <button class="btn-danger" id="destroy-btn" disabled onclick="confirmDestroy()">
+      Destroy All Matching Playlists
+    </button>
+
+    <!-- Log -->
+    <div class="card log-card">
+      <div class="card-label">LOG</div>
+      <div class="log" id="log"></div>
+    </div>
+
+  </div>
+
+  <!-- Settings modal -->
+  <div class="modal-overlay hidden" id="modal-overlay" onclick="onOverlayClick(event)">
+    <div class="modal">
+      <div class="modal-title">Plex Settings</div>
+      <div class="field-label">Plex Token</div>
+      <div class="muted" style="font-size:12px; margin-bottom:8px;">
+        Connects via Plex cloud — works from anywhere.
+      </div>
+      <input type="password" id="token-input" class="text-input" placeholder="Your Plex token">
+
+      <label class="toggle-item" style="margin-top:16px;">
+        <input type="checkbox" id="adult-content-toggle">
+        <span class="toggle-track"></span><span>Include adult-content library items</span>
+      </label>
+
+      <button class="btn-primary" onclick="saveSettings()" style="margin-top:16px;">
+        Save &amp; Reconnect
+      </button>
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
