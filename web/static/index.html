@@ -135,7 +135,10 @@
     </div>
 
     <!-- Buttons -->
-    <button class="btn-primary" id="build-btn" disabled onclick="startBuild()">Build Playlists</button>
+    <div class="btn-row">
+      <button class="btn-primary" id="build-btn" disabled onclick="startBuild(false)">Build Playlists</button>
+      <button class="btn-secondary" id="preview-btn" disabled onclick="startBuild(true)">Preview (Dry Run)</button>
+    </div>
     <button class="btn-danger" id="destroy-btn" disabled onclick="confirmDestroy()">
       Destroy All Matching Playlists
     </button>

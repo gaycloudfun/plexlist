@@ -33,7 +33,8 @@ async function loadLibraries() {
     sel.appendChild(opt);
   });
   sel.disabled = false;
-  document.getElementById('build-btn').disabled = false;
+  document.getElementById('build-btn').disabled   = false;
+  document.getElementById('preview-btn').disabled = false;
   document.getElementById('destroy-btn').disabled = false;
 }
 
@@ -176,7 +177,7 @@ function getRulesData() {
 
 // ── Build ─────────────────────────────────────────────────────────────────────
 
-function startBuild() {
+function startBuild(dryRun) {
   if (eventSource) { eventSource.close(); eventSource = null; }
 
   const library = document.getElementById('library-select').value;
@@ -184,9 +185,11 @@ function startBuild() {
 
   resetStats();
   clearLog();
-  setProgress(0, 'Starting…');
-  document.getElementById('build-btn').disabled  = true;
-  document.getElementById('build-btn').textContent = 'Building…';
+  setProgress(0, dryRun ? 'Previewing…' : 'Starting…');
+  document.getElementById('build-btn').disabled   = true;
+  document.getElementById('preview-btn').disabled = true;
+  document.getElementById('build-btn').textContent =
+    dryRun ? 'Build Playlists' : 'Building…';
 
   let params;
   if (currentMode === 'quick') {
@@ -194,11 +197,15 @@ function startBuild() {
       .map(cb => cb.value).join(',');
     if (!selected) { appendLog('No playlist types selected.', 'red'); resetBtn(); return; }
     const actorFilter = document.getElementById('actor-filter').value.trim();
-    params = new URLSearchParams({library, prefix, mode: 'quick', types: selected, actor_filter: actorFilter});
+    params = new URLSearchParams({
+      library, prefix, mode: 'quick', types: selected, actor_filter: actorFilter, dry_run: dryRun,
+    });
   } else {
     const rules = getRulesData();
     if (!rules.length) { appendLog('No rules defined.', 'red'); resetBtn(); return; }
-    params = new URLSearchParams({library, prefix, mode: 'custom', rules: JSON.stringify(rules)});
+    params = new URLSearchParams({
+      library, prefix, mode: 'custom', rules: JSON.stringify(rules), dry_run: dryRun,
+    });
   }
 
   let playlistCount = 0;
@@ -208,7 +215,7 @@ function startBuild() {
     const msg = JSON.parse(e.data);
     switch (msg.type) {
       case 'start':
-        appendLog(`Scanning ${msg.total} items in '${library}' …`, 'orange');
+        appendLog(`${dryRun ? 'Previewing' : 'Scanning'} ${msg.total} items in '${library}' …`, 'orange');
         break;
 
       case 'progress': {
@@ -223,17 +230,20 @@ function startBuild() {
         break;
 
       case 'playlist':
-        appendPlaylistLog(prefix, msg.name, msg.count);
+        appendPlaylistLog(prefix, msg.name, msg.count, msg.replaced, msg.dry_run);
         playlistCount++;
         document.getElementById('stat-playlists').textContent = playlistCount;
         break;
 
       case 'done':
-        setProgress(100, 'Complete');
+        setProgress(100, dryRun ? 'Preview complete' : 'Complete');
         document.getElementById('stat-scanned').textContent   = msg.total;
         document.getElementById('stat-playlists').textContent = msg.created;
-        document.getElementById('stat-skipped').textContent   = '0';
-        appendLog(`\nDone — ${msg.created} playlists created.`, 'orange');
+        document.getElementById('stat-skipped').textContent   = msg.skipped;
+        appendLog(
+          `\n${dryRun ? 'Preview' : 'Done'} — ${msg.created} playlist(s), ${msg.skipped} item(s) skipped.`,
+          'orange'
+        );
         resetBtn();
         eventSource.close();
         break;
@@ -256,6 +266,7 @@ function startBuild() {
 
 function resetBtn() {
   document.getElementById('build-btn').disabled    = false;
+  document.getElementById('preview-btn').disabled  = false;
   document.getElementById('build-btn').textContent = 'Build Playlists';
 }
 
@@ -309,12 +320,14 @@ function appendLog(msg, cls = '') {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-function appendPlaylistLog(prefix, name, count) {
+function appendPlaylistLog(prefix, name, count, replaced, dryRun) {
   const logEl = document.getElementById('log');
   const line  = document.createElement('div');
   line.className = 'log-line';
-  line.innerHTML  =
-    `  ✓  <span class="accent">${esc(prefix)}</span>${esc(name)}  (${count} items)`;
+  const icon = dryRun ? '○' : (replaced ? '↻' : '✓');
+  const verb = dryRun ? (replaced ? 'would replace' : 'would create') : (replaced ? 'replaced' : 'created');
+  line.innerHTML =
+    `  ${icon}  <span class="accent">${esc(prefix)}</span>${esc(name)}  (${count} items, ${verb})`;
   logEl.appendChild(line);
   logEl.scrollTop = logEl.scrollHeight;
 }
