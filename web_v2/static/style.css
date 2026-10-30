@@ -37,12 +37,7 @@ body {
   justify-content: space-between;
 }
 
-.brand-name {
-  font-size: 30px;
-  font-weight: 700;
-  letter-spacing: -0.5px;
-  line-height: 1;
-}
+.brand-logo { height: 40px; display: block; }
 
 .accent { color: var(--orange); }
 
@@ -332,20 +327,24 @@ body {
 }
 .add-rule-btn:hover { background: #333; }
 
-/* ── Stats ───────────────────────────────────────────────────────────────── */
+/* ── Status card ─────────────────────────────────────────────────────────── */
 
-.stats-row { display: flex; gap: 14px; }
-
-.stat-tile {
-  flex: 1;
-  background: var(--card);
-  border-radius: 12px;
-  padding: 14px;
-  text-align: center;
+.steps {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 15px;
+  color: var(--muted);
 }
+.steps li { display: flex; align-items: center; gap: 6px; }
+.steps li + li::before { content: '→'; color: var(--muted); margin-right: 4px; }
+.steps li.done::after { content: '✓'; color: var(--green); }
+/* The first unfinished step is the one to do next. */
+.steps li:not(.done) { color: var(--fg); font-weight: 600; }
+.steps li:not(.done) ~ li { color: var(--muted); font-weight: 400; }
 
-.stat-value { font-size: 26px; font-weight: 700; margin-bottom: 4px; }
-.stat-label { font-size: 13px; color: var(--muted); }
+.result-headline { font-size: 22px; font-weight: 700; margin-bottom: 12px; }
 
 /* ── Progress ────────────────────────────────────────────────────────────── */
 
@@ -405,22 +404,44 @@ body {
 
 .btn-danger {
   width: 100%;
-  background: transparent;
-  color: var(--red);
-  border: 1px solid #5A2020;
+  background: var(--red);
+  color: #fff;
+  border: none;
   border-radius: 14px;
-  padding: 13px;
+  padding: 16px;
   font-family: 'Inter', sans-serif;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 700;
   cursor: pointer;
   transition: background 0.15s;
 }
-.btn-danger:hover:not(:disabled) { background: rgba(58,16,16,.8); }
+.btn-danger:hover:not(:disabled) { background: #D84340; }
 .btn-danger:disabled              { opacity: 0.45; cursor: default; }
 
 /* ── Log ─────────────────────────────────────────────────────────────────── */
 
 .log-card { min-height: 180px; }
+.log-card:has(.log.hidden) { min-height: 0; }
+
+.log-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-bottom: 12px;
+  cursor: pointer;
+  font: inherit;
+}
+.log-toggle .card-label { margin-bottom: 0; }
+.log-toggle-icon {
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+.log-toggle-icon.collapsed { transform: rotate(-90deg); }
 
 .log {
   font-family: 'Courier New', monospace;
@@ -495,7 +516,7 @@ body {
     flex-wrap: wrap;
     row-gap: 10px;
   }
-  .brand-name { font-size: 24px; }
+  .brand-logo { height: 24px; }
   .header-right { flex-wrap: wrap; }
 
   .badge { max-width: 100%; }
@@ -517,13 +538,40 @@ body {
     text-overflow: ellipsis;
   }
 
-  .stats-row { gap: 8px; }
-  .stat-tile { padding: 10px 6px; }
-  .stat-value { font-size: 21px; }
-  .stat-label { font-size: 11px; }
+  .result-headline { font-size: 19px; }
 
   .btn-row { flex-direction: column; }
 
   .rule-fields { flex-direction: column; }
   .rule-field { min-width: 0; }
+}
+
+/* ── Version watermark ───────────────────────────────────────────────────── */
+
+.version-mark {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 1000;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: #16A34A;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  pointer-events: none;
+}
+
+/* ── Destroy list ────────────────────────────────────────────────────────── */
+
+.destroy-list {
+  max-height: 180px;
+  overflow-y: auto;
+  margin: 10px 0;
+  padding: 8px 8px 8px 26px;
+  background: var(--card2);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.6;
 }

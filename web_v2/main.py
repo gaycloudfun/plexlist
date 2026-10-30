@@ -6,6 +6,7 @@ import asyncio
 import json
 import queue
 import re
+import subprocess
 import threading
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -16,12 +17,21 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from plexapi.exceptions import BadRequest, NotFound
 from plexapi.myplex import MyPlexAccount
 from plexapi.server import PlexServer
 
 from settings_store import load_settings, save_settings
 
-app = FastAPI()
+app = FastAPI(title="Structly", version="5.0")
+
+
+@app.middleware("http")
+async def no_cache(request, call_next):
+    # Make Chrome re-check files on every load, so a normal refresh shows the latest UI.
+    response = await call_next(request)
+    response.headers.setdefault("Cache-Control", "no-cache")
+    return response
 
 # ── State ─────────────────────────────────────────────────────────────────────
 
@@ -31,6 +41,7 @@ PORN_ROOT         = "/other/Porn"
 CATEGORIES_FOLDER = "CATEGORIES"
 MIN_ITEMS         = 2
 RECENT_DAYS       = 30
+ARCHIVE_DIR       = Path.home() / "Documents" / "Structly Archives"
 
 RESOLUTION_MAP = {
     "4k": "4K", "2160": "4K",
@@ -209,17 +220,134 @@ def update_settings(req: SettingsRequest):
     return {"include_adult_content": data["include_adult_content"]}
 
 
-class DestroyRequest(BaseModel):
+class PrefixRequest(BaseModel):
     prefix: str
 
 
+class RestoreRequest(BaseModel):
+    prefix: str
+    library: str
+
+
 @app.post("/api/destroy")
-def destroy(req: DestroyRequest):
+def destroy(req: PrefixRequest):
+    # An empty prefix matches every playlist on the server, not just ours.
+    if not req.prefix.strip():
+        raise HTTPException(400, "Prefix is empty — refusing to delete every playlist")
     plex = get_plex()
+    archived = archive_playlists(plex, req.prefix, last_archive_dir())
+    # A playlist that didn't save would be lost for good if we deleted it now.
+    if archived["errors"]:
+        failed = ", ".join(e["title"] for e in archived["errors"])
+        raise HTTPException(500, f"Archive failed for {failed} — nothing was deleted")
     targets = [pl for pl in plex.playlists() if pl.title.startswith(req.prefix)]
     for pl in targets:
         pl.delete()
-    return {"destroyed": len(targets)}
+    return {"destroyed": len(targets), "archive": archived}
+
+
+@app.get("/api/playlists")
+def playlists(prefix: str):
+    """Titles Destroy would delete, so the user sees them before confirming."""
+    return {"titles": [pl.title for pl in get_plex().playlists() if pl.title.startswith(prefix)]}
+
+
+# ── Archive / Restore ─────────────────────────────────────────────────────────
+
+def archive_path(folder: Path, title: str) -> Path:
+    return folder / (title.replace("/", "_") + ".json")
+
+
+def last_archive_dir() -> Path:
+    return Path(load_settings().get("archive_dir") or ARCHIVE_DIR)
+
+
+def choose_folder(start: Path) -> Optional[Path]:
+    """Native Mac folder picker, opened in front of the browser. None if cancelled."""
+    start.mkdir(parents=True, exist_ok=True)
+    res = subprocess.run(
+        ["osascript", "-e", "on run argv",
+         "-e", "tell application (path to frontmost application as text) to POSIX path of "
+               '(choose folder with prompt "Choose the Structly archive folder" '
+               "default location (POSIX file (item 1 of argv)))",
+         "-e", "end run", str(start)],
+        capture_output=True, text=True,
+    )
+    if res.returncode != 0:  # user hit Cancel
+        return None
+    folder = Path(res.stdout.strip())
+    save_settings(archive_dir=str(folder))
+    return folder
+
+
+def move_to_trash(path: Path) -> None:
+    # Path goes in argv, not the script text, so quotes in a title can't inject AppleScript.
+    subprocess.run(
+        ["osascript", "-e", "on run argv",
+         "-e", 'tell application "Finder" to delete POSIX file (item 1 of argv)',
+         "-e", "end run", str(path)],
+        check=True, capture_output=True, timeout=15,
+    )
+
+
+@app.post("/api/archive")
+def archive(req: PrefixRequest):
+    plex   = get_plex()
+    folder = choose_folder(last_archive_dir())
+    if folder is None:
+        return {"cancelled": True}
+    return archive_playlists(plex, req.prefix, folder)
+
+
+def archive_playlists(plex, prefix: str, folder: Path) -> dict:
+    # A failed write raises, so destroy() never deletes a playlist that wasn't archived.
+    folder.mkdir(parents=True, exist_ok=True)
+    saved, duplicates, errors = [], [], []
+    for pl in plex.playlists():
+        if not pl.title.startswith(prefix):
+            continue
+        items = [{"ratingKey": i.ratingKey, "title": getattr(i, "title", "")} for i in pl.items()]
+        body  = json.dumps({"title": pl.title, "items": items}, indent=2, ensure_ascii=False)
+        path = archive_path(folder, pl.title)
+        if not path.exists():
+            path.write_text(body)
+            saved.append(pl.title)
+            continue
+        # Same name already archived: the original stays, the new copy goes to the Trash.
+        dup = path.with_name(f"{path.stem} (duplicate {datetime.now():%Y-%m-%d %H%M%S}).json")
+        dup.write_text(body)
+        try:
+            move_to_trash(dup)
+            duplicates.append(pl.title)
+        except (subprocess.SubprocessError, OSError) as e:
+            dup.unlink(missing_ok=True)
+            errors.append({"title": pl.title, "reason": f"could not move duplicate to Trash: {e}"})
+    return {"folder": str(folder), "saved": saved, "duplicates": duplicates, "errors": errors}
+
+
+@app.post("/api/restore")
+def restore(req: RestoreRequest):
+    plex   = get_plex()
+    folder = choose_folder(last_archive_dir())
+    if folder is None:
+        return {"cancelled": True}
+    restored, errors = [], []
+    for path in sorted(folder.glob("*.json")):
+        try:
+            data  = json.loads(path.read_text())
+            title = data["title"]
+            if not title.startswith(req.prefix):
+                continue
+            keys  = ",".join(str(i["ratingKey"]) for i in data["items"])
+            items = plex.fetchItems(f"/library/metadata/{keys}") if keys else []
+            if not items:
+                errors.append({"title": title, "reason": "none of its videos are in Plex anymore"})
+                continue
+            upsert_playlist(plex, title, items, req.library)
+            restored.append({"title": title, "count": len(items)})
+        except (json.JSONDecodeError, KeyError, TypeError, OSError, NotFound, BadRequest) as e:
+            errors.append({"title": path.stem, "reason": str(e)})
+    return {"folder": str(folder), "restored": restored, "errors": errors}
 
 
 # ── Build (SSE) ───────────────────────────────────────────────────────────────
@@ -235,6 +363,7 @@ def _build_worker(
     q: queue.Queue,
     include_adult: bool = False,
     dry_run: bool = False,
+    on_done=None,
 ):
     try:
         section   = plex.library.section(library)
@@ -289,10 +418,10 @@ def _build_worker(
                     try:
                         pg = parse_path_groups(item.media[0].parts[0].file)
                         if "studio" in pg:
-                            groups[f"FLDR STU: {pg['studio']}"].append(item)
+                            groups[f"STU: {pg['studio']}"].append(item)
                             matched = True
                         if "category" in pg:
-                            groups[f"FLDR Cat: {pg['category']}"].append(item)
+                            groups[f"Cat: {pg['category']}"].append(item)
                             matched = True
                     except (IndexError, AttributeError):
                         pass
@@ -367,12 +496,19 @@ def _build_worker(
     except Exception as e:
         q.put({"type": "error", "msg": str(e)})
     finally:
+        # Before the end-of-stream marker, so a build started right after this one isn't refused.
+        if on_done:
+            on_done()
         q.put(None)
+
+
+# Two builds at once would both miss an existing playlist and create duplicates.
+_build_lock = threading.Lock()
 
 
 class BuildRequest(BaseModel):
     library: str
-    prefix: str  = "t "
+    prefix: str  = ""
     mode: str    = "quick"
     types: str   = ""
     actor_filter: str = ""
@@ -389,13 +525,16 @@ async def build(req: BuildRequest):
     selected   = set(req.types.split(",")) if req.types else set()
     rules_list = json.loads(req.rules)
     include_adult = load_settings().get("include_adult_content", False)
+    if not _build_lock.acquire(blocking=False):
+        raise HTTPException(409, "A build is already running — wait for it to finish")
 
     q = queue.Queue()
     threading.Thread(
         target=_build_worker,
         args=(plex, req.library, req.prefix, req.mode, selected,
               req.actor_filter.lower(), rules_list, q),
-        kwargs={"include_adult": include_adult, "dry_run": req.dry_run},
+        kwargs={"include_adult": include_adult, "dry_run": req.dry_run,
+                "on_done": _build_lock.release},
         daemon=True,
     ).start()
 

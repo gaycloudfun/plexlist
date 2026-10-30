@@ -93,3 +93,14 @@ def test_build_respects_adult_setting_from_store(client, monkeypatch):
 
 def test_build_requires_library(client, connected):
     assert client.post("/api/build", json={}).status_code == 422
+
+
+def test_second_build_is_refused_while_one_runs(client, connected):
+    assert main._build_lock.acquire(blocking=False)  # a build in progress
+    try:
+        assert client.post("/api/build", json={"library": "Library", "types": "studio"}).status_code == 409
+    finally:
+        main._build_lock.release()
+    # Lock is free again after a finished build.
+    assert client.post("/api/build", json={"library": "Library", "types": "studio"}).status_code == 200
+    assert client.post("/api/build", json={"library": "Library", "types": "studio"}).status_code == 200

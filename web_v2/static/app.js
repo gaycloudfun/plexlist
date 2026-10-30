@@ -7,6 +7,7 @@ let buildAbort  = null;
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
+  if (hasBuilt()) showStatus('progress');
   try {
     const settings = await apiFetch('/api/settings');
     applyAdultContentState(settings.include_adult_content);
@@ -41,14 +42,17 @@ async function loadLibraries() {
   });
   sel.disabled = false;
   document.getElementById('build-btn').disabled   = false;
-  document.getElementById('preview-btn').disabled = false;
   document.getElementById('destroy-btn').disabled = false;
+  document.getElementById('archive-btn').disabled = false;
+  document.getElementById('restore-btn').disabled = false;
+  tickStep('step-library');
 }
 
 // ── Badge ─────────────────────────────────────────────────────────────────────
 
 function setConnected(name) {
   setBadge('green', `Connected · ${name}`);
+  tickStep('step-connect');
 }
 
 function setBadge(color, text) {
@@ -131,6 +135,8 @@ async function saveSettings() {
   setBadge('muted', 'Connecting…');
   document.getElementById('build-btn').disabled   = true;
   document.getElementById('destroy-btn').disabled = true;
+  document.getElementById('archive-btn').disabled = true;
+  document.getElementById('restore-btn').disabled = true;
   try {
     const res = await apiFetch('/api/connect', {
       method: 'POST',
@@ -223,11 +229,10 @@ async function startBuild(dryRun) {
   const library = document.getElementById('library-select').value;
   const prefix  = document.getElementById('prefix-input').value;
 
-  resetStats();
   clearLog();
+  showStatus('progress');
   setProgress(0, dryRun ? 'Previewing…' : 'Starting…');
   document.getElementById('build-btn').disabled   = true;
-  document.getElementById('preview-btn').disabled = true;
   document.getElementById('build-btn').textContent =
     dryRun ? 'Previewing…' : 'Building…';
 
@@ -248,7 +253,6 @@ async function startBuild(dryRun) {
     };
   }
 
-  let playlistCount = 0;
   let finished      = false;
 
   // Same message handling as before — only the transport changed. Returns true
@@ -262,7 +266,6 @@ async function startBuild(dryRun) {
       case 'progress': {
         const pct = msg.total > 0 ? msg.current / msg.total * 100 : 0;
         setProgress(pct, `Scanning ${msg.current} of ${msg.total}`);
-        document.getElementById('stat-scanned').textContent = msg.current;
         break;
       }
 
@@ -272,15 +275,11 @@ async function startBuild(dryRun) {
 
       case 'playlist':
         appendPlaylistLog(prefix, msg.name, msg.count, msg.replaced, msg.dry_run);
-        playlistCount++;
-        document.getElementById('stat-playlists').textContent = playlistCount;
         break;
 
       case 'done':
         setProgress(100, dryRun ? 'Preview complete' : 'Complete');
-        document.getElementById('stat-scanned').textContent   = msg.total;
-        document.getElementById('stat-playlists').textContent = msg.created;
-        document.getElementById('stat-skipped').textContent   = msg.skipped;
+        if (!dryRun) showResult(msg);
         appendLog(
           `\n${dryRun ? 'Preview' : 'Done'} — ${msg.created} playlist(s), ${msg.skipped} item(s) skipped.`,
           'orange'
@@ -371,19 +370,44 @@ async function startBuild(dryRun) {
 
 function resetBtn() {
   document.getElementById('build-btn').disabled    = false;
-  document.getElementById('preview-btn').disabled  = false;
   document.getElementById('build-btn').textContent = 'Build Playlists';
 }
 
 // ── Destroy ───────────────────────────────────────────────────────────────────
 
+// In-page modal instead of confirm(): browsers let users silence repeat dialogs,
+// after which confirm() returns false forever and Destroy looks dead.
 async function confirmDestroy() {
   const prefix = document.getElementById('prefix-input').value;
-  if (!confirm(`Delete ALL Plex playlists starting with '${prefix}'?\n\nThis cannot be undone.`)) return;
+  if (!prefix.trim()) { appendLog('Set a prefix first — an empty prefix would match every playlist.', 'red'); return; }
+  let titles;
+  try {
+    titles = (await apiFetch(`/api/playlists?${new URLSearchParams({prefix})}`)).titles;
+  } catch (e) { clearLog(); appendLog(`Error: ${e.message}`, 'red'); return; }
+  if (!titles.length) { clearLog(); appendLog(`No playlists start with '${prefix}' — nothing to destroy.`, 'orange'); return; }
+  // Show exactly what goes, so a short prefix can't silently take the user's own playlists.
+  const list = document.getElementById('destroy-list');
+  list.innerHTML = '';
+  titles.forEach(t => { const li = document.createElement('li'); li.textContent = t; list.appendChild(li); });
+  document.getElementById('destroy-count').textContent = `${titles.length} playlist${titles.length === 1 ? '' : 's'}`;
+  document.getElementById('destroy-prefix').textContent = `'${prefix}'`;
+  document.getElementById('destroy-overlay').classList.remove('hidden');
+  document.getElementById('destroy-cancel').focus();
+}
 
-  document.getElementById('destroy-btn').disabled = true;
+function closeDestroy() {
+  document.getElementById('destroy-overlay').classList.add('hidden');
+  document.getElementById('destroy-btn').focus();
+}
+
+async function doDestroy() {
+  const btn    = document.getElementById('destroy-btn');
+  const prefix = document.getElementById('prefix-input').value;
+  closeDestroy();
+
+  btn.disabled = true;
   clearLog();
-  appendLog(`Destroying playlists with prefix '${prefix}' …`);
+  appendLog(`Archiving, then destroying playlists with prefix '${prefix}' …`);
 
   try {
     const res = await apiFetch('/api/destroy', {
@@ -391,11 +415,66 @@ async function confirmDestroy() {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({prefix}),
     });
-    appendLog(`Done — ${res.destroyed} playlist(s) destroyed.`, 'orange');
+    const a = res.archive;
+    appendLog(`Archived first: ${a.saved.length} new, ${a.duplicates.length} already archived (copy to Trash) — ${a.folder}`);
+    a.errors.forEach(e => appendLog(`  ✗  ${e.title}: ${e.reason}`, 'red'));
+    appendLog(res.destroyed
+      ? `Done — ${res.destroyed} playlist(s) destroyed.`
+      : `No playlists start with '${prefix}' — nothing to destroy.`, 'orange');
   } catch (e) {
     appendLog(`Error: ${e.message}`, 'red');
   } finally {
-    document.getElementById('destroy-btn').disabled = false;
+    btn.disabled = false;
+  }
+}
+
+// ── Archive / Restore ─────────────────────────────────────────────────────────
+
+async function archivePlaylists() {
+  const btn    = document.getElementById('archive-btn');
+  const prefix = document.getElementById('prefix-input').value;
+  btn.disabled = true;
+  clearLog();
+  appendLog('Choose a folder in the window that just opened …');
+  try {
+    const res = await apiFetch('/api/archive', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({prefix}),
+    });
+    if (res.cancelled) { appendLog('Archive cancelled — no folder chosen.'); return; }
+    res.saved.forEach(t => appendLog(`  ✓  saved ${t}`));
+    res.duplicates.forEach(t => appendLog(`  ↺  ${t} already archived — kept original, copy sent to Trash`));
+    res.errors.forEach(e => appendLog(`  ✗  ${e.title}: ${e.reason}`, 'red'));
+    appendLog(`Done — ${res.saved.length} saved, ${res.duplicates.length} duplicate(s) in ${res.folder}`, 'orange');
+  } catch (e) {
+    appendLog(`Error: ${e.message}`, 'red');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function restorePlaylists() {
+  const btn     = document.getElementById('restore-btn');
+  const prefix  = document.getElementById('prefix-input').value;
+  const library = document.getElementById('library-select').value;
+  btn.disabled = true;
+  clearLog();
+  appendLog('Choose the archive folder in the window that just opened …');
+  try {
+    const res = await apiFetch('/api/restore', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({prefix, library}),
+    });
+    if (res.cancelled) { appendLog('Restore cancelled — no folder chosen.'); return; }
+    res.restored.forEach(r => appendLog(`  ✓  ${r.title}  (${r.count} items)`));
+    res.errors.forEach(e => appendLog(`  ✗  ${e.title}: ${e.reason}`, 'red'));
+    appendLog(`Done — ${res.restored.length} playlist(s) restored from ${res.folder}`, 'orange');
+  } catch (e) {
+    appendLog(`Error: ${e.message}`, 'red');
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -408,10 +487,36 @@ function setProgress(pct, label) {
     'progress-label' + (pct === 0 || label === 'Ready' ? ' muted' : '');
 }
 
-function resetStats() {
-  document.getElementById('stat-scanned').textContent   = '—';
-  document.getElementById('stat-playlists').textContent = '—';
-  document.getElementById('stat-skipped').textContent   = '—';
+// ── Status card ───────────────────────────────────────────────────────────────
+// One card, three faces: first-run steps → build progress → result + next steps.
+
+function showStatus(face) {
+  for (const f of ['steps', 'progress', 'result'])
+    document.getElementById(`status-${f}`).classList.toggle('hidden', f !== face);
+}
+
+function tickStep(id) { document.getElementById(id).classList.add('done'); }
+
+// Per-browser flag: once someone has built, skip the first-run steps.
+function hasBuilt() {
+  try { return localStorage.getItem('structly_built') === '1'; } catch { return false; }
+}
+
+function showResult(msg) {
+  const n = x => Number(x).toLocaleString();
+  let text = `${n(msg.created)} playlist${msg.created === 1 ? '' : 's'} · ${n(msg.total)} videos`;
+  if (msg.skipped) text += ` · ${n(msg.skipped)} skipped`;
+  document.getElementById('result-headline').textContent = text;
+  showStatus('result');
+  try { localStorage.setItem('structly_built', '1'); } catch { /* private window */ }
+}
+
+function buildAnother() {
+  setProgress(0, 'Ready');
+  showStatus('progress');
+  const sel = document.getElementById('library-select');
+  sel.focus();
+  try { sel.showPicker(); } catch { /* older browsers: focus is enough */ }
 }
 
 // ── Log ───────────────────────────────────────────────────────────────────────
@@ -437,7 +542,21 @@ function appendPlaylistLog(prefix, name, count, replaced, dryRun) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-function clearLog() { document.getElementById('log').innerHTML = ''; }
+// Every action starts with clearLog(), so the collapsed log opens to show its output.
+function clearLog() {
+  document.getElementById('log').innerHTML = '';
+  setLogOpen(true);
+}
+
+function toggleLog() {
+  setLogOpen(document.getElementById('log').classList.contains('hidden'));
+}
+
+function setLogOpen(open) {
+  document.getElementById('log').classList.toggle('hidden', !open);
+  document.getElementById('log-toggle-icon').classList.toggle('collapsed', !open);
+  document.getElementById('log-toggle').setAttribute('aria-expanded', String(open));
+}
 
 function esc(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');

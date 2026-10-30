@@ -57,6 +57,7 @@ function makeSandbox({fetchImpl, ops}) {
     set className(v) { this._className = v; rec(`className:${this.id}=${v}`); }
     get className() { return this._className; }
     addEventListener() {}
+    setAttribute(k, v) { rec(`attr:${this.id}.${k}=${v}`); }
     appendChild(child) {
       this.children.push(child);
       // Log lines are the user-visible output — record content, not identity.
@@ -169,7 +170,8 @@ async function runOld(events, {dryRun = false, mode = 'events'} = {}) {
     es.onerror();
   }
   await settle();
-  return {ops, url: es.url};
+  // v5 dropped the Preview button; ignore its ops in the old-vs-new diff.
+  return {ops: ops.filter(s => !s.includes("preview-btn")), url: es.url};
 }
 
 // ── Run the NEW implementation ────────────────────────────────────────────────
@@ -218,7 +220,16 @@ async function runNew(events, {dryRun = false, mode = 'events', chunkSize = null
   return {ops, captured};
 }
 
+// v5 replaced the stats row with the status card and collapses the log, so
+// those UI-only ops differ by design; the comparison is about the transport.
+const UI_ONLY = s => {
+  const id = s.slice(s.indexOf(':') + 1, s.indexOf('='));
+  return /^(stat|status|result|step)-/.test(id) || /^(log|log-toggle|log-toggle-icon)(\.|$)/.test(id) && !s.startsWith('append:') && !s.startsWith('html:');
+};
+
 function diff(a, b) {
+  a = a.filter(s => !UI_ONLY(s));
+  b = b.filter(s => !UI_ONLY(s));
   const out = [];
   const n = Math.max(a.length, b.length);
   for (let i = 0; i < n; i++) if (a[i] !== b[i]) out.push(`  [${i}] old=${a[i]}  new=${b[i]}`);
@@ -247,7 +258,6 @@ function diff(a, b) {
       const expected = [
         "append:log=[log-line orange] Scanning 10 items in 'MyLibrary' …",
         'append:log=[log-line orange] Building playlists from 2 groups…',
-        'text:stat-scanned=10', 'text:stat-playlists=2', 'text:stat-skipped=1',
         'text:progress-label=Complete', 'disabled:build-btn=false',
         'text:build-btn=Build Playlists',
       ];
@@ -255,6 +265,11 @@ function diff(a, b) {
       check('happy path (real run): every message type reaches the DOM',
         missing.length === 0, '  missing: ' + JSON.stringify(missing));
     }
+    check('happy path: status card shows the result with next steps',
+      n.ops.includes('text:result-headline=2 playlists · 10 videos · 1 skipped') &&
+      n.ops.includes('class~:status-result=hidden:false'), '  ' + JSON.stringify(n.ops));
+    check('log opens when a build starts',
+      n.ops.includes('class~:log=hidden:false') && n.ops.includes('attr:log-toggle.aria-expanded=true'));
     check('POST /api/build with JSON body',
       n.captured.url === '/api/build' && n.captured.opts.method === 'POST' &&
       n.captured.opts.headers['Content-Type'] === 'application/json');
@@ -327,7 +342,6 @@ function diff(a, b) {
     const newRecovers =
       n.ops.some(s => s.includes('Not connected to Plex')) &&
       n.ops.includes('disabled:build-btn=false') &&
-      n.ops.includes('disabled:preview-btn=false') &&
       n.ops.includes('text:build-btn=Build Playlists');
     if (o) {
       check('503: old code did nothing (the bug)', oldStuck, '  old ops: ' + JSON.stringify(o.ops));

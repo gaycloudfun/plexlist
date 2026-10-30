@@ -5,6 +5,7 @@ Structly — Plex Playlist Builder v4
 import os
 import sys
 from datetime import datetime, timedelta
+import tkinter as tk
 from tkinter import filedialog, messagebox
 
 if getattr(sys, "frozen", False):
@@ -128,7 +129,7 @@ def load_prefix_image(path: str, size: int = 28) -> ctk.CTkImage | None:
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Structly — Playlist Builder")
+        self.title("Structly v4 (desktop) — Playlist Builder")
         self.update_idletasks()
         win_h = min(980, self.winfo_screenheight() - 80)
         self.geometry(f"620x{win_h}")
@@ -143,6 +144,9 @@ class App(ctk.CTk):
         self._prefix_img_path  = None
         self._prefix_ctk_img   = None
         self._build_ui()
+        # Version watermark so the builds can't be mistaken for each other.
+        tk.Label(self, text="v4 · DESKTOP", bg="#7C3AED", fg="white",
+                 font=("Helvetica", 12, "bold"), padx=10, pady=3).place(relx=1.0, rely=1.0, anchor="se")
         self.bind("<Command-Return>", lambda e: self._start_run())
         self.bind("<Control-Return>", lambda e: self._start_run())
         self.bind("<Escape>", lambda e: self._request_cancel())

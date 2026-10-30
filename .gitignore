@@ -6,3 +6,4 @@ web/.env
 .venv/
 venv/
 *.egg-info/
+.gstack/

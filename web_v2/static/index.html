@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Structly — Playlist Builder</title>
+  <title>Structly v5 — Playlist Builder</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -15,8 +15,8 @@
     <!-- Header -->
     <header class="header">
       <div class="brand">
-        <div class="brand-name">st<span class="accent">r</span>uctly</div>
-        <div class="brand-sub">Playlist Builder for Plex</div>
+        <img class="brand-logo" src="structly_logo.png" alt="Structly">
+        <div class="brand-sub">Playlist Builder for Plex · v5</div>
       </div>
       <div class="header-right">
         <div class="badge" id="badge">
@@ -41,8 +41,7 @@
     <div class="card">
       <div class="prefix-row">
         <div class="card-label" style="margin-bottom:0">PREFIX</div>
-        <input type="text" id="prefix-input" class="prefix-entry" value="t " maxlength="3">
-        <span class="muted" style="font-size:12px; margin-left:8px;">max 3 chars</span>
+        <input type="text" id="prefix-input" class="prefix-entry" value="" placeholder="abc" maxlength="3" aria-label="Playlist prefix">
       </div>
     </div>
 
@@ -110,43 +109,43 @@
       <button class="add-rule-btn" onclick="addRule()">+ Add Rule</button>
     </div>
 
-    <!-- Stats -->
-    <div class="stats-row">
-      <div class="stat-tile">
-        <div class="stat-value" id="stat-scanned">—</div>
-        <div class="stat-label">Scanned</div>
+    <!-- Status: first-run steps → build progress → result + next steps -->
+    <div class="card status-card" aria-live="polite">
+      <ol class="steps" id="status-steps">
+        <li id="step-connect">Connect Plex</li>
+        <li id="step-library">Pick a library</li>
+        <li id="step-build">Build</li>
+      </ol>
+      <div id="status-progress" class="hidden">
+        <div id="progress-label" class="progress-label muted">Ready</div>
+        <div class="progress-track">
+          <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+        </div>
       </div>
-      <div class="stat-tile">
-        <div class="stat-value" id="stat-playlists">—</div>
-        <div class="stat-label">Playlists</div>
-      </div>
-      <div class="stat-tile">
-        <div class="stat-value" id="stat-skipped">—</div>
-        <div class="stat-label">Skipped</div>
-      </div>
-    </div>
-
-    <!-- Progress -->
-    <div class="card">
-      <div id="progress-label" class="progress-label muted">Ready</div>
-      <div class="progress-track">
-        <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+      <div id="status-result" class="hidden">
+        <div class="result-headline" id="result-headline"></div>
+        <div class="btn-row">
+          <button class="btn-secondary" onclick="archivePlaylists()">Archive these</button>
+          <button class="btn-secondary" onclick="buildAnother()">Build another library</button>
+        </div>
       </div>
     </div>
 
     <!-- Buttons -->
+    <button class="btn-primary" id="build-btn" disabled onclick="startBuild(false)">Build Playlists</button>
     <div class="btn-row">
-      <button class="btn-primary" id="build-btn" disabled onclick="startBuild(false)">Build Playlists</button>
-      <button class="btn-secondary" id="preview-btn" disabled onclick="startBuild(true)">Preview (Dry Run)</button>
+      <button class="btn-secondary" id="archive-btn" disabled onclick="archivePlaylists()">Archive to Computer</button>
+      <button class="btn-secondary" id="restore-btn" disabled onclick="restorePlaylists()">Restore from Archive</button>
     </div>
-    <button class="btn-danger" id="destroy-btn" disabled onclick="confirmDestroy()">
-      Destroy All Matching Playlists
-    </button>
+    <button class="btn-danger" id="destroy-btn" disabled onclick="confirmDestroy()">Destroy Playlists</button>
 
     <!-- Log -->
     <div class="card log-card">
-      <div class="card-label">LOG</div>
-      <div class="log" id="log"></div>
+      <button class="log-toggle" id="log-toggle" onclick="toggleLog()" aria-expanded="false" aria-controls="log">
+        <span class="card-label">LOG</span>
+        <span class="log-toggle-icon collapsed" id="log-toggle-icon" aria-hidden="true">▾</span>
+      </button>
+      <div class="log hidden" id="log"></div>
     </div>
 
   </div>
@@ -173,6 +172,26 @@
     </div>
   </div>
 
+  <!-- Destroy confirm modal -->
+  <div class="modal-overlay hidden" id="destroy-overlay" onclick="if (event.target === this) closeDestroy()">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="destroy-title">
+      <div class="modal-title" id="destroy-title">Destroy playlists?</div>
+      <div class="muted" style="font-size:13px; line-height:1.5;">
+        This deletes these <span id="destroy-count"></span> starting with
+        <strong class="accent" id="destroy-prefix"></strong>:
+      </div>
+      <ul class="destroy-list" id="destroy-list"></ul>
+      <div class="muted" style="font-size:13px; line-height:1.5;">
+        They're saved to your last archive folder first, but you can also
+        archive them to a folder of your choice now.
+      </div>
+      <button class="btn-secondary" onclick="archivePlaylists()" style="margin-top:12px;">Archive to Computer</button>
+      <button class="btn-danger" onclick="doDestroy()">Destroy Playlists</button>
+      <button class="btn-cancel" id="destroy-cancel" onclick="closeDestroy()">Cancel</button>
+    </div>
+  </div>
+
+  <div class="version-mark" aria-hidden="true">v5 · LATEST</div>
   <script src="app.js"></script>
 </body>
 </html>
