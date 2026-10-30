@@ -73,6 +73,7 @@ function applyAdultContentState(includeAdult) {
   if (!folder) return;
   folder.disabled = !includeAdult;
   if (!includeAdult) folder.checked = false;
+  syncSelectAll();
   const item = folder.closest('.toggle-item');
   if (item) {
     item.classList.toggle('disabled', !includeAdult);
@@ -163,8 +164,20 @@ function setMode(m) {
 
 // ── Actor toggle ──────────────────────────────────────────────────────────────
 
-document.getElementById('actor-toggle').addEventListener('change', e => {
-  document.getElementById('actor-entry-row').style.display = e.target.checked ? '' : 'none';
+// Enabled types only: Folder stays off while adult content is excluded.
+function enabledTypes() {
+  return Array.from(document.querySelectorAll('input[name="ptype"]:not(:disabled)'));
+}
+
+function syncSelectAll() {
+  document.getElementById('select-all').checked = enabledTypes().every(cb => cb.checked);
+}
+
+document.getElementById('quick-panel').addEventListener('change', e => {
+  if (e.target.id === 'select-all') enabledTypes().forEach(cb => { cb.checked = e.target.checked; });
+  else syncSelectAll();
+  document.getElementById('actor-entry-row').style.display =
+    document.getElementById('actor-toggle').checked ? '' : 'none';
 });
 
 // ── Custom rules ──────────────────────────────────────────────────────────────

@@ -32,7 +32,7 @@ Then open http://127.0.0.1:8765
 
 ### Prefix
 - The prefix box now starts **empty** — type any 1–3 characters.
-- Folder playlists are named `STU: …` / `Cat: …` (the old `FLDR ` tag is gone).
+- Folder playlists are named after the folder (e.g. `abcStudioName`) or `Cat: …` (the old `FLDR ` and `STU: ` tags are gone).
   The old `web/` app still uses `FLDR`; it was not touched.
 
 ### Destroy Playlists
@@ -75,7 +75,7 @@ Then open http://127.0.0.1:8765
 - The real Mac folder picker and Trash (tests use stand-ins).
 
 ## Tell existing users
-> Folder playlists are now named "STU: …" / "Cat: …" instead of "FLDR STU: …" / "FLDR Cat: …".
+> Folder playlists are now named after the folder (no "FLDR STU: " tag), and categories are "Cat: …".
 > To avoid duplicates, run **Destroy Playlists** on your prefix once, then rebuild.
 
 ## Open decision

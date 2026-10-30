@@ -53,49 +53,55 @@
 
     <!-- Quick panel -->
     <div class="card" id="quick-panel">
-      <div class="card-label">PLAYLIST TYPES</div>
+      <div class="panel-head">
+        <div class="card-label" style="margin-bottom:0">PLAYLIST TYPES</div>
+        <label class="toggle-item">
+          <input type="checkbox" id="select-all" autocomplete="off">
+          <span class="toggle-track"></span><span>Select all</span>
+        </label>
+      </div>
       <div class="toggle-grid">
         <div class="toggle-row">
           <label class="toggle-item">
-            <input type="checkbox" name="ptype" value="studio" checked>
+            <input type="checkbox" name="ptype" value="studio" autocomplete="off">
             <span class="toggle-track"></span><span>Studio</span>
           </label>
           <label class="toggle-item">
-            <input type="checkbox" name="ptype" value="genre" checked>
+            <input type="checkbox" name="ptype" value="genre" autocomplete="off">
             <span class="toggle-track"></span><span>Genre</span>
           </label>
           <label class="toggle-item">
-            <input type="checkbox" name="ptype" value="director" checked>
+            <input type="checkbox" name="ptype" value="director" autocomplete="off">
             <span class="toggle-track"></span><span>Director</span>
           </label>
         </div>
         <div class="toggle-row">
           <label class="toggle-item">
-            <input type="checkbox" name="ptype" value="actor" checked id="actor-toggle">
+            <input type="checkbox" name="ptype" value="actor" autocomplete="off" id="actor-toggle">
             <span class="toggle-track"></span><span>Actor</span>
           </label>
           <label class="toggle-item">
-            <input type="checkbox" name="ptype" value="resolution" checked>
+            <input type="checkbox" name="ptype" value="resolution" autocomplete="off">
             <span class="toggle-track"></span><span>Resolution</span>
           </label>
           <label class="toggle-item">
-            <input type="checkbox" name="ptype" value="recent" checked>
+            <input type="checkbox" name="ptype" value="recent" autocomplete="off">
             <span class="toggle-track"></span><span>Recently Added</span>
           </label>
         </div>
         <div class="toggle-row">
           <label class="toggle-item">
-            <input type="checkbox" name="ptype" value="duration" checked>
+            <input type="checkbox" name="ptype" value="duration" autocomplete="off">
             <span class="toggle-track"></span><span>Duration</span>
           </label>
           <label class="toggle-item">
-            <input type="checkbox" name="ptype" value="folder" checked>
+            <input type="checkbox" name="ptype" value="folder" autocomplete="off">
             <span class="toggle-track"></span><span>Folder</span>
           </label>
           <label class="toggle-item"></label>
         </div>
       </div>
-      <div id="actor-entry-row" class="actor-entry-row">
+      <div id="actor-entry-row" class="actor-entry-row" style="display:none">
         <div class="field-label">Actor name</div>
         <input type="text" id="actor-filter" class="text-input"
                placeholder="e.g. Tom Hardy  (leave blank for all)">

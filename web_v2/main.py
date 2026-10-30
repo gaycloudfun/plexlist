@@ -418,7 +418,7 @@ def _build_worker(
                     try:
                         pg = parse_path_groups(item.media[0].parts[0].file)
                         if "studio" in pg:
-                            groups[f"STU: {pg['studio']}"].append(item)
+                            groups[pg['studio']].append(item)
                             matched = True
                         if "category" in pg:
                             groups[f"Cat: {pg['category']}"].append(item)

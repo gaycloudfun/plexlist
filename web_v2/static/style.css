@@ -575,3 +575,10 @@ body {
   font-size: 13px;
   line-height: 1.6;
 }
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
